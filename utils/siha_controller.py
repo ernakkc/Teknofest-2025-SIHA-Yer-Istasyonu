@@ -78,8 +78,12 @@ class SIHAController:
     
     def update_telemetry(self):
         """Telemetri verilerini güncelle"""
+        # Check if we have an active connection
+        if self.mavlink_connection is None:
+            return  # Silently return if no connection
+
         try:
-            msg = self.mavlink_connection.recv_match(type=['GLOBAL_POSITION_INT', 'ATTITUDE', 
+            msg = self.mavlink_connection.recv_match(type=['GLOBAL_POSITION_INT', 'ATTITUDE',
                                                           'VFR_HUD', 'SYS_STATUS', 'GPS_RAW_INT',
                                                           'HEARTBEAT'], blocking=False)
             if msg:

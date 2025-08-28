@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QScrollArea, QFrame
 from PyQt5.QtGui import QFont, QPalette, QColor
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 
 from utils.siha_controller import SIHAController
 
@@ -60,7 +60,8 @@ class MainWindow(QWidget):
         print(" Sistem hazır - Telemetri verilerini izlemeye başlayın")
         print(" Kontrol panelinden komutlarınızı gönderin")
 
-        
+        # Start periodic telemetry updates
+        self.start_telemetry_timer()
 
 
 
@@ -234,27 +235,38 @@ class MainWindow(QWidget):
     def connect_vehicle(self, port, baudrate):
         print(f"🔌 SIHA'ya bağlanmaya çalışılıyor... Port: {port}, Baudrate: {baudrate}")
         if self.siha.connect_to_vehicle(port, baudrate):
-            print(f" SIHA'ya başarıyla bağlandı! Port: {port}")
+            print(f"✅ SIHA'ya başarıyla bağlandı! Port: {port}")
             self.refresh_telemetry()
+            # Restart timer with connected state
+            if hasattr(self, 'telemetry_timer'):
+                self.telemetry_timer.start(1000)
             return True
         else:
-            print(f" SIHA bağlantısı başarısız! Port: {port}")
+            print(f"❌ SIHA bağlantısı başarısız! Port: {port}")
+            # Stop timer if connection fails
+            if hasattr(self, 'telemetry_timer'):
+                self.telemetry_timer.stop()
             return False
 
     def refresh_telemetry(self):
         print("📡 Telemetri verileri yenileniyor...")
-        self.siha.update_telemetry()
-        telemetry_data = self.siha.return_telemetry_var()
-        self.info_bar.update_info(telemetry_data)
+        try:
+            if self.siha.mavlink_connection is not None:
+                self.siha.update_telemetry()
+                telemetry_data = self.siha.return_telemetry_var()
+                self.info_bar.update_info(telemetry_data)
 
-        # Update map position if location data is available
-        if hasattr(telemetry_data, 'get') and 'current_location' in telemetry_data:
-            location = telemetry_data['current_location']
-            if location and 'lat' in location and 'lon' in location:
-                lat = location['lat']
-                lon = location['lon']
-                if lat != 0 and lon != 0:  # Only update if we have valid coordinates
-                    self.map_widget.update_position(lat, lon)
+                # Update map position if location data is available
+                if hasattr(telemetry_data, 'get') and 'current_location' in telemetry_data:
+                    location = telemetry_data['current_location']
+                    if location and 'lat' in location and 'lon' in location:
+                        lat = location['lat']
+                        lon = location['lon']
+                        if lat != 0 and lon != 0:  # Only update if we have valid coordinates
+                            print(".4f")
+                            self.map_widget.update_position(lat, lon)
+        except Exception as e:
+            print(f"Telemetri yenileme hatası: {e}")
 
     def sag_kacis(self):
         print(" Sağ kaçış manevrası başlatıldı!")
@@ -277,9 +289,49 @@ class MainWindow(QWidget):
     def kamikaze_modu(self):
         print(" Kamikaze modu aktif! Tehlikeli!")
         
+    def start_telemetry_timer(self):
+        """Start periodic telemetry updates"""
+        self.telemetry_timer = QTimer()
+        self.telemetry_timer.timeout.connect(self.update_infos)
+        # Only start if we have a connection, otherwise just create the timer
+        if self.siha.mavlink_connection is not None:
+            self.telemetry_timer.start(100)  # Update every 1 second
+        else:
+            print("⏸️ Telemetri timer hazır - bağlantı bekleniyor...")
+        
     def update_infos(self):
-        self.siha.update_telemetry()
-        self.info_bar.update_info(self.siha.return_telemetry_var())
+        """Periodic telemetry update function"""
+        try:
+            # Only update if we have an active connection
+            if self.siha.mavlink_connection is not None:
+                self.siha.update_telemetry()
+                telemetry_data = self.siha.return_telemetry_var()
+                self.info_bar.update_info(telemetry_data)
+
+                # Update map position if location data is available
+                if hasattr(telemetry_data, 'get') and 'current_location' in telemetry_data:
+                    location = telemetry_data['current_location']
+                    if location and 'lat' in location and 'lon' in location:
+                        lat = location['lat']
+                        lon = location['lon']
+                        if lat != 0 and lon != 0:  # Only update if we have valid coordinates
+                            self.map_widget.update_position(lat, lon)
+                
+            else:
+                # No active connection, just update the info bar with empty data
+                empty_data = {
+                    'current_location': {'lat': 0, 'lon': 0, 'alt': 0},
+                    'current_attitude': {'roll': 0, 'pitch': 0, 'yaw': 0},
+                    'current_velocity': {'vx': 0, 'vy': 0, 'vz': 0},
+                    'battery_info': {'voltage': 0, 'current': 0, 'remaining': 0},
+                    'gps_info': {'fix_type': 0, 'satellites': 0}
+                }
+                self.info_bar.update_info(empty_data)
+        except Exception as e:
+            print(f"Telemetri güncelleme hatası: {e}")
+            # Don't spam the console, wait a bit before next attempt
+            import time
+            time.sleep(0.1)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
